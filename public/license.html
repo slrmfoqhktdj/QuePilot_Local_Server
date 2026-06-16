@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QuePilot - 라이선스 인증</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      height: 100vh;
+      background: linear-gradient(135deg, #0f172a, #1e293b);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 420px;
+      padding: 32px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+    }
+
+    .logo {
+      text-align: center;
+      font-size: 22px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      letter-spacing: 1px;
+    }
+
+    .logo span {
+      color: #38bdf8;
+    }
+
+    .subtitle {
+      text-align: center;
+      font-size: 13px;
+      color: #94a3b8;
+      margin-bottom: 28px;
+    }
+
+    .input-group {
+      margin-bottom: 16px;
+    }
+
+    .input-group label {
+      font-size: 13px;
+      color: #cbd5f5;
+      margin-bottom: 6px;
+      display: block;
+    }
+
+    .input-group input {
+      width: 100%;
+      padding: 12px;
+      border-radius: 10px;
+      border: none;
+      outline: none;
+      background: rgba(255,255,255,0.08);
+      color: white;
+      font-size: 14px;
+    }
+
+    .input-group input:focus {
+      background: rgba(255,255,255,0.12);
+    }
+
+    .input-group input::placeholder {
+      color: #64748b;
+    }
+
+    .button {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 15px;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+
+    .btn-primary {
+      background: #38bdf8;
+      color: #0f172a;
+    }
+
+    .btn-primary:hover {
+      background: #0ea5e9;
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .btn-logout {
+      background: rgba(248, 113, 113, 0.15);
+      color: #f87171;
+      margin-top: 12px;
+    }
+
+    .btn-logout:hover {
+      background: rgba(248, 113, 113, 0.25);
+    }
+
+    .status {
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      display: none;
+      text-align: center;
+    }
+
+    .status.success {
+      display: block;
+      background: rgba(74, 222, 128, 0.1);
+      color: #4ade80;
+    }
+
+    .status.error {
+      display: block;
+      background: rgba(248, 113, 113, 0.1);
+      color: #f87171;
+    }
+
+    .status.info {
+      display: block;
+      background: rgba(56, 189, 248, 0.1);
+      color: #38bdf8;
+    }
+
+    .license-info {
+      margin-top: 20px;
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 10px;
+      display: none;
+    }
+
+    .license-info.show {
+      display: block;
+    }
+
+    .license-info .row {
+      display: flex;
+      justify-content: space-between;
+      padding: 6px 0;
+      font-size: 13px;
+    }
+
+    .license-info .row .label {
+      color: #94a3b8;
+    }
+
+    .license-info .row .value {
+      color: #4ade80;
+      font-weight: 600;
+    }
+
+    .license-info .row .value.expired {
+      color: #f87171;
+    }
+
+    .license-info .row .value.warning {
+      color: #fbbf24;
+    }
+
+    .divider {
+      height: 1px;
+      background: rgba(255, 255, 255, 0.08);
+      margin: 12px 0;
+    }
+
+    .footer {
+      margin-top: 20px;
+      font-size: 12px;
+      color: #94a3b8;
+      text-align: center;
+    }
+
+    .server-status {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+
+    .server-status.running {
+      background: #4ade80;
+      box-shadow: 0 0 6px rgba(74, 222, 128, 0.5);
+    }
+
+    .server-status.stopped {
+      background: #f87171;
+      box-shadow: 0 0 6px rgba(248, 113, 113, 0.5);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="logo">
+      🚀 <span>QuePilot</span>
+    </div>
+    <div class="subtitle" id="subtitle">구독 계정으로 로그인</div>
+
+    <!-- 로그인 폼 -->
+    <form id="loginForm">
+      <div class="input-group">
+        <label>아이디</label>
+        <input
+          name="email"
+          id="email"
+          placeholder="구독 계정 이메일"
+          required
+        />
+      </div>
+
+      <div class="input-group">
+        <label>비밀번호</label>
+        <input
+          name="password"
+          id="password"
+          type="password"
+          placeholder="비밀번호"
+          required
+        />
+      </div>
+
+      <button class="button btn-primary" id="loginBtn" type="submit">
+        로그인
+      </button>
+    </form>
+
+    <!-- 상태 메시지 -->
+    <div class="status" id="status"></div>
+
+    <!-- 라이선스 정보 (로그인 성공 후 표시) -->
+    <div class="license-info" id="licenseInfo">
+      <div class="row">
+        <span class="label">계정</span>
+        <span class="value" id="infoAccount">-</span>
+      </div>
+      <div class="row">
+        <span class="label">플랜</span>
+        <span class="value" id="infoPlan">-</span>
+      </div>
+      <div class="row">
+        <span class="label">회사</span>
+        <span class="value" id="infoCompany">-</span>
+      </div>
+      <div class="row">
+        <span class="label">최대 사용자</span>
+        <span class="value" id="infoMaxUsers">-</span>
+      </div>
+      <div class="divider"></div>
+      <div class="row">
+        <span class="label">구독 만료일</span>
+        <span class="value" id="infoExpires">-</span>
+      </div>
+      <div class="row">
+        <span class="label">남은 일수</span>
+        <span class="value" id="infoDaysLeft">-</span>
+      </div>
+      <div class="divider"></div>
+      <div class="row">
+        <span class="label">서버 상태</span>
+        <span class="value" id="infoServerStatus">
+          <span class="server-status stopped"></span>중지됨
+        </span>
+      </div>
+
+      <button class="button btn-logout" id="logoutBtn" onclick="logout()">
+        로그아웃
+      </button>
+    </div>
+
+    <div class="footer">
+      내부망 전용 시스템
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('loginForm');
+    const btn = document.getElementById('loginBtn');
+    const statusBox = document.getElementById('status');
+    const licenseInfo = document.getElementById('licenseInfo');
+    const subtitle = document.getElementById('subtitle');
+
+    // 페이지 로드 시 기존 인증 상태 확인
+    (async () => {
+      try {
+        const res = await fetch('/license/status');
+        const data = await res.json();
+
+        if (data.isValid) {
+          form.style.display = 'none';
+          subtitle.textContent = '라이선스 인증 완료';
+          showStatus('✅ 서버 실행 중', 'success');
+          showLicenseInfo(data, true);
+        }
+      } catch (e) {
+        // 서버 아직 준비 안됨
+      }
+    })();
+
+    // 로그인 폼 제출
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value.trim();
+
+      if (!email || !password) {
+        showStatus('이메일과 비밀번호를 입력하세요.', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = '로그인 중...';
+      showStatus('구독 서버에 연결 중...', 'info');
+
+      try {
+        const res = await fetch('/license/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+
+        const data = await res.json();
+
+        if (data.success) {
+          showStatus('✅ 인증 성공! 서버를 시작합니다...', 'success');
+          subtitle.textContent = '라이선스 인증 완료';
+          form.style.display = 'none';
+          showLicenseInfo(data, true);
+        } else {
+          showStatus('❌ ' + (data.message || '로그인 실패'), 'error');
+          btn.disabled = false;
+          btn.textContent = '로그인';
+        }
+
+      } catch (err) {
+        showStatus('❌ 구독 서버 연결 실패', 'error');
+        btn.disabled = false;
+        btn.textContent = '로그인';
+      }
+    });
+
+    // 로그아웃
+    async function logout() {
+      try {
+        await fetch('/license/logout', { method: 'POST' });
+      } catch (e) {}
+
+      licenseInfo.classList.remove('show');
+      form.style.display = 'block';
+      subtitle.textContent = '구독 계정으로 로그인';
+      statusBox.className = 'status';
+      statusBox.style.display = 'none';
+
+      document.getElementById('email').value = '';
+      document.getElementById('password').value = '';
+      btn.disabled = false;
+      btn.textContent = '로그인';
+    }
+
+    function showStatus(msg, type) {
+      statusBox.textContent = msg;
+      statusBox.className = 'status ' + type;
+    }
+
+    function showLicenseInfo(data, isRunning) {
+      document.getElementById('infoAccount').textContent = data.account || '-';
+      document.getElementById('infoPlan').textContent = data.plan || '-';
+      document.getElementById('infoCompany').textContent = data.companyName || '-';
+      document.getElementById('infoMaxUsers').textContent =
+        data.maxUsers ? data.maxUsers + '명' : '-';
+
+      // 만료일
+      const expiresEl = document.getElementById('infoExpires');
+      const daysLeftEl = document.getElementById('infoDaysLeft');
+
+      if (data.expiresAt) {
+        const expires = new Date(data.expiresAt);
+        const now = new Date();
+        const daysLeft = Math.ceil((expires - now) / (1000 * 60 * 60 * 24));
+
+        expiresEl.textContent = expires.toLocaleDateString('ko-KR');
+
+        if (daysLeft <= 0) {
+          expiresEl.classList.add('expired');
+          daysLeftEl.textContent = '만료됨';
+          daysLeftEl.classList.add('expired');
+        } else if (daysLeft <= 7) {
+          daysLeftEl.textContent = daysLeft + '일';
+          daysLeftEl.classList.add('warning');
+        } else {
+          daysLeftEl.textContent = daysLeft + '일';
+        }
+      } else {
+        expiresEl.textContent = '-';
+        daysLeftEl.textContent = '-';
+      }
+
+      // 서버 상태
+      const serverEl = document.getElementById('infoServerStatus');
+      if (isRunning) {
+        serverEl.innerHTML =
+          '<span class="server-status running"></span>실행 중';
+      } else {
+        serverEl.innerHTML =
+          '<span class="server-status stopped"></span>중지됨';
+      }
+
+      licenseInfo.classList.add('show');
+    }
+  </script>
+</body>
+</html>

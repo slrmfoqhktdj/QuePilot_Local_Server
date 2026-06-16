@@ -1,0 +1,32 @@
+{
+  "name": "quepilotex01",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main-server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "server": "node main-server.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "better-sqlite3": "^12.9.0",
+    "better-sqlite3-session-store": "^0.1.0",
+    "bytenode": "^1.5.7",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dgram": "^1.0.1",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "fs": "^0.0.1-security",
+    "http-proxy-middleware": "^3.0.5",
+    "mysql2": "^3.16.1",
+    "node-cron": "^4.2.1",
+    "node-systray-v2": "github:Edgar-P-yan/node-systray-v2",
+    "os": "^0.1.2",
+    "path": "^0.12.7",
+    "socket.io": "^4.8.3",
+    "uuid": "^8.3.2"
+  }
+}
