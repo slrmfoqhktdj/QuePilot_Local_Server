@@ -331,6 +331,7 @@ async function createTimeline(id, name, room_id, cues) {
 
     for (const cue of cues) {
       const cueId = cue.id || crypto.randomUUID();
+      cue.id = cueId;
       insertCue.run(cueId, cue.label, cue.comment, cue.color, id, cue.startTime, cue.duration);
     }
   });
@@ -342,28 +343,65 @@ async function createTimeline(id, name, room_id, cues) {
 
 
 // ═══════════════════════════════════════════════
-//  updateTimeline (큐 전체 교체)
+//  updateTimeline (트랙 업데이트 + 큐 diff 동기화)
+//  기존 DB의 큐와 비교해 변경/추가/삭제된 큐만 반영
+//  (기존의 전체 삭제 후 재삽입 방식 대비 불필요한 쓰기와
+//   created_at 리셋을 방지)
 // ═══════════════════════════════════════════════
 async function updateTimeline(id, name, room_id, cues) {
   console.log('Updating timeline with data');
 
-  const deleteCues  = db.prepare('DELETE FROM cues WHERE track_id = ?');
   const updateTrack = db.prepare('UPDATE tracks SET name = ?, room_id = ? WHERE id = ?');
+  const selectCues  = db.prepare(
+    'SELECT id, label, comment, color, start_time, duration FROM cues WHERE track_id = ?'
+  );
   const insertCue   = db.prepare(
     'INSERT INTO cues (id, label, comment, color, track_id, start_time, duration) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
+  const updateCue   = db.prepare(
+    'UPDATE cues SET label = ?, comment = ?, color = ?, start_time = ?, duration = ? WHERE id = ?'
+  );
+  const deleteCue   = db.prepare('DELETE FROM cues WHERE id = ?');
 
   const txn = db.transaction(() => {
-    // 큐 먼저 삭제
-    deleteCues.run(id);
-
-    // 트랙 업데이트
     updateTrack.run(name, room_id, id);
 
-    // 새로운 큐 삽입
+    const existingById = new Map(
+      selectCues.all(id).map((row) => [row.id, row])
+    );
+    const incomingIds = new Set();
+
     for (const cue of cues) {
-      const cueId = cue.id || crypto.randomUUID();
-      insertCue.run(cueId, cue.label, cue.comment, cue.color, id, cue.startTime, cue.duration);
+      const existing = cue.id ? existingById.get(cue.id) : undefined;
+
+      if (!existing) {
+        // 신규 큐 (id 없음 또는 DB에 없는 id) → INSERT
+        const cueId = cue.id || crypto.randomUUID();
+        cue.id = cueId;
+        insertCue.run(cueId, cue.label, cue.comment, cue.color, id, cue.startTime, cue.duration);
+        incomingIds.add(cueId);
+        continue;
+      }
+
+      incomingIds.add(cue.id);
+
+      // 변경된 필드가 있을 때만 UPDATE
+      if (
+        existing.label      !== (cue.label ?? '') ||
+        existing.comment    !== (cue.comment ?? '') ||
+        existing.color      !== (cue.color ?? '') ||
+        existing.start_time !== cue.startTime ||
+        existing.duration   !== cue.duration
+      ) {
+        updateCue.run(cue.label ?? '', cue.comment ?? '', cue.color ?? '', cue.startTime, cue.duration, cue.id);
+      }
+    }
+
+    // 전송되지 않은 기존 큐 → 삭제
+    for (const row of existingById.values()) {
+      if (!incomingIds.has(row.id)) {
+        deleteCue.run(row.id);
+      }
     }
   });
 

@@ -192,22 +192,24 @@ async function initCallEvents(socket, namespace, usersInfo, projectId) {
     const session = socket.handshake.session;
     
     const { to, offer } = data;
-    console.log(`🔗 [WebRTC Offer] ${session.userId} → ${to}`);
+    // console.log(`🔗 [WebRTC Offer] ${session.userId} → ${to}`);
 
     const clientInfo = usersInfo.get(session.userId);
     if (!clientInfo) return;
 
+    const targetInfo = usersInfo.get(to);
+    const targetSocketId = targetInfo?.projectSocketId;
+    const targetSocket = targetSocketId ? namespace.sockets.get(targetSocketId) : null;
 
-    const targetSocket = namespace.sockets.get(to);
     if (targetSocket && targetSocket.connected) {
-      namespace.to(to).emit('webrtc-offer', {
+      namespace.to(targetSocketId).emit('webrtc-offer', {
         from: session.userId,
         fromUsername: clientInfo.userName,
         offer: offer,
       });
-      console.log(`✅ Offer 전달 완료: ${session.userId} → ${to}`);
+      // console.log(`✅ Offer 전달 완료: ${session.userId} → ${to} (socket: ${targetSocketId})`);
     } else {
-      console.log(`❌ 대상 소켓 없음 또는 연결 끊김: ${to}`);
+      console.log(`❌ 대상 소켓 없음 또는 연결 끊김: userId=${to}, socketId=${targetSocketId}`);
       
       // ✅ 발신자에게 실패 알림
       // socket.emit('webrtc-error', {
@@ -223,17 +225,20 @@ async function initCallEvents(socket, namespace, usersInfo, projectId) {
     const session = socket.handshake.session;
     
     const { to, answer } = data;
-    console.log(`🔗 [WebRTC Answer] ${session.userId} → ${to}`);
+    // console.log(`🔗 [WebRTC Answer] ${session.userId} → ${to}`);
 
-    const targetSocket = namespace.sockets.get(to);
+    const targetInfo = usersInfo.get(to);
+    const targetSocketId = targetInfo?.projectSocketId;
+    const targetSocket = targetSocketId ? namespace.sockets.get(targetSocketId) : null;
+
     if (targetSocket && targetSocket.connected) {
-      namespace.to(to).emit('webrtc-answer', {
+      namespace.to(targetSocketId).emit('webrtc-answer', {
         from: session.userId,
         answer: answer,
       });
-      console.log(`✅ Answer 전달 완료: ${session.userId} → ${to}`);
+      // console.log(`✅ Answer 전달 완료: ${session.userId} → ${to} (socket: ${targetSocketId})`);
     } else {
-      console.log(`❌ 대상 소켓 없음: ${to}`);
+      console.log(`❌ 대상 소켓 없음: userId=${to}, socketId=${targetSocketId}`);
 
       // ✅ 발신자에게 실패 알림
       // socket.emit('webrtc-error', {
@@ -249,18 +254,20 @@ async function initCallEvents(socket, namespace, usersInfo, projectId) {
     const session = socket.handshake.session;
 
     const { to, candidate } = data;
-    console.log(`🧊 [WebRTC ICE] ${session.userId} → ${to}`);
+    // console.log(`🧊 [WebRTC ICE] ${session.userId} → ${to}`);
 
+    const targetInfo = usersInfo.get(to);
+    const targetSocketId = targetInfo?.projectSocketId;
+    const targetSocket = targetSocketId ? namespace.sockets.get(targetSocketId) : null;
 
-    const targetSocket = namespace.sockets.get(to);
     if (targetSocket && targetSocket.connected) {
-      namespace.to(to).emit('webrtc-ice-candidate', {
+      namespace.to(targetSocketId).emit('webrtc-ice-candidate', {
         from: session.userId,
         candidate: candidate,
       });
-      console.log(`✅ ICE 전달 완료`);
+      // console.log(`✅ ICE 전달 완료: ${session.userId} → ${to} (socket: ${targetSocketId})`);
     } else {
-      console.log(`❌ 대상 소켓 없음: ${to}`);
+      console.log(`❌ 대상 소켓 없음: userId=${to}, socketId=${targetSocketId}`);
     }
   });
 

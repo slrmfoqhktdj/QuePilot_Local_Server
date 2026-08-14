@@ -1,11 +1,11 @@
 class TimelineState {
-  constructor(projectId, namespace) {
+  constructor(projectId, namespace, duration) {
     this.projectId = projectId;
     this.namespace = namespace;
     this.isPlaying = false;
     this.currentTime = 0;
     this.playbackSpeed = 1.0;
-    this.duration = 120;
+    this.duration = duration || 120;
     this.startedAt = null;
     this.pausedAt = null;
     this.lastBroadcast = 0;
@@ -13,8 +13,15 @@ class TimelineState {
     this.syncInterval = 1000; // 1000ms마다 동기화 (조절 가능)
   }
 
-  play() {
-    if (this.isPlaying) return;
+  play(time) {
+    if (this.isPlaying) {
+      console.log(`[${this.projectId}] 이미 재생 중 — 무시`);
+      return false;
+    }
+
+    if (time != null) {
+      this.currentTime = Math.max(0, Math.min(time, this.duration));
+    }
     
     this.isPlaying = true;
     this.startedAt = Date.now() - (this.currentTime * 1000 / this.playbackSpeed);
@@ -30,30 +37,26 @@ class TimelineState {
     }
     
     this.namespace.emit('project-play', data);
-
-    // 하트비트 시작 (재생 중일 때만)
     this.startHeartbeat();
     
     console.log(`[${this.projectId}] Playing from ${this.currentTime}s`);
-
-    return data;
+    return true;
   }
 
-  pause() {
-    if (!this.isPlaying) return;
+  pause(time) {
+    if (!this.isPlaying) {
+      console.log(`[${this.projectId}] 재생 중이 아님 — 무시`);
+      return false;
+    }
     
-    // 현재 시간 계산 및 고정
-    this.currentTime = this.getCurrentTime();
+    if (time != null) {
+      this.currentTime = Math.max(0, Math.min(time, this.duration));
+    } else {
+      this.currentTime = this.getCurrentTime();
+    }
 
     this.isPlaying = false;
     this.pausedAt = Date.now();
-    
-    // console.log(`[${this.projectId}] Pausing... ${this.currentTime}s`);
-  
-    // // 현재 시간 계산 및 고정
-    // this.currentTime = this.getCurrentTime();
-    
-    // 하트비트 중지
     this.stopHeartbeat();
 
     const data = {
@@ -68,8 +71,7 @@ class TimelineState {
     this.namespace.emit('project-pause', data);
     
     console.log(`[${this.projectId}] Paused at ${this.currentTime}s`);
-
-    return data;
+    return true;
   }
 
   stop() {

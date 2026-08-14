@@ -7,7 +7,7 @@ const crypto = require('crypto');
 //  getUsers
 // ═══════════════════════════════════════════════
 async function getUsers() {
-  const stmt = db.prepare('SELECT id, login_id, name FROM users');
+  const stmt = db.prepare('SELECT id, login_id, name, created_at FROM users');
   return stmt.all();
 }
 
@@ -16,7 +16,7 @@ async function getUsers() {
 //  getUsersById
 // ═══════════════════════════════════════════════
 async function getUsersById(id) {
-  const stmt = db.prepare('SELECT id, login_id, name FROM users WHERE id = ?');
+  const stmt = db.prepare('SELECT id, login_id, name, created_at FROM users WHERE id = ?');
   const row = stmt.get(id);
   return row || {};
 }
@@ -26,7 +26,7 @@ async function getUsersById(id) {
 //  getUsersByLoginId
 // ═══════════════════════════════════════════════
 async function getUsersByLoginId(login_id) {
-  const stmt = db.prepare('SELECT id, login_id, name FROM users WHERE login_id = ?');
+  const stmt = db.prepare('SELECT id, login_id, name, created_at FROM users WHERE login_id = ?');
   const row = stmt.get(login_id);
   return row || {};
 }
@@ -90,7 +90,7 @@ async function deleteUserById(id) {
 // ═══════════════════════════════════════════════
 async function loginUser(login_id, password) {
   const stmt = db.prepare(
-    'SELECT id, login_id, name FROM users WHERE login_id = ? AND password = ?'
+    'SELECT id, login_id, name, created_at FROM users WHERE login_id = ? AND password = ?'
   );
   const row = stmt.get(login_id, password);
   return row || null;

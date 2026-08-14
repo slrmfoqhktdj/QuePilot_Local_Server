@@ -27,7 +27,6 @@ function detectLocalIP() {
 }
 
 function startDiscoveryServer(httpPort) {
-  const serverIP = detectLocalIP();
   const port = httpPort || SERVER_HTTP_PORT;
 
   discoverySocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
@@ -35,11 +34,12 @@ function startDiscoveryServer(httpPort) {
   discoverySocket.on('message', (msg, rinfo) => {
     const message = msg.toString().trim();
 
-    // 클라이언트의 디스커버리 요청인지 확인
     if (message === DISCOVERY_MAGIC) {
       console.log(`🔍 디스커버리 요청 수신: ${rinfo.address}:${rinfo.port}`);
 
-      // 서버 정보를 JSON으로 응답
+      // ★ 클라이언트와 같은 네트워크의 IP를 찾아서 응답
+      const serverIP = findMatchingIP(rinfo.address);
+
       const response = JSON.stringify({
         magic: 'QUEPILOT_SERVER',
         ip: serverIP,
@@ -54,7 +54,7 @@ function startDiscoveryServer(httpPort) {
         if (err) {
           console.error('❌ 디스커버리 응답 실패:', err.message);
         } else {
-          console.log(`✅ 디스커버리 응답 전송 → ${rinfo.address}:${rinfo.port}`);
+          console.log(`✅ 디스커버리 응답 전송 → ${rinfo.address}:${rinfo.port} (서버IP: ${serverIP})`);
         }
       });
     }
@@ -67,12 +67,47 @@ function startDiscoveryServer(httpPort) {
   discoverySocket.on('listening', () => {
     const addr = discoverySocket.address();
     console.log(`✅ 디스커버리 서버 시작됨 — UDP ${addr.address}:${addr.port}`);
-    console.log(`   서버 IP: ${serverIP}, HTTP 포트: ${port}`);
+    console.log(`   감지된 IP 목록:`, getAllLocalIPs());
   });
 
   discoverySocket.bind(DISCOVERY_PORT, '0.0.0.0');
 
   return discoverySocket;
+}
+
+// ★ 클라이언트 IP와 같은 서브넷의 서버 IP를 찾기
+function findMatchingIP(clientIP) {
+  const clientParts = clientIP.split('.');
+  const clientSubnet = clientParts.slice(0, 3).join('.'); // 예: 192.168.50
+
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        const ifaceSubnet = iface.address.split('.').slice(0, 3).join('.');
+        if (ifaceSubnet === clientSubnet) {
+          return iface.address;
+        }
+      }
+    }
+  }
+
+  // 같은 서브넷을 못 찾으면 기존 방식으로 폴백
+  return detectLocalIP();
+}
+
+// ★ 디버그용: 모든 로컬 IP 반환
+function getAllLocalIPs() {
+  const ips = [];
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        ips.push(`${name}: ${iface.address}`);
+      }
+    }
+  }
+  return ips;
 }
 
 function stopDiscoveryServer() {

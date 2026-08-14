@@ -41,7 +41,7 @@ async function selectProjectsNamespace() {
   return projects;
 }
 
-async function setupCreateProjectNamespace(io, projectId, projectName, usersInfo , socketSessionMiddleware) {
+async function setupCreateProjectNamespace(io, projectId, projectName, usersInfo, socketSessionMiddleware, duration) {
   // 이미 존재하는 네임스페이스는 다시 생성하지 않음
   if (namespaces.has(projectId)) {
     console.log(`[경고] 프로젝트 ${projectId}의 네임스페이스가 이미 존재합니다.`);
@@ -51,7 +51,7 @@ async function setupCreateProjectNamespace(io, projectId, projectName, usersInfo
   console.log(`프로젝트 ID: ${projectId}, 이름: ${projectName} - 네임스페이스 생성`);
 
   const namespace = io.of(`/${projectId}`);
-  const timelineTimer = new timelineTimerClass.TimelineState(projectId, namespace);
+  const timelineTimer = new timelineTimerClass.TimelineState(projectId, namespace, duration);
   // 프로젝트 전용 rooms 저장소 초기화
   const rooms = new Map();
   projectRooms.set(projectId, rooms);
@@ -167,11 +167,31 @@ async function setupCreateProjectNamespace(io, projectId, projectName, usersInfo
         console.log(`   - Main socket: ${userInfo.mainSocketId}`);
         console.log(`   - Project socket: ${userInfo.projectSocketId}`);
       } else {
-        // Admin이 메인 서버 연결 없이 프로젝트에 직접 연결 (비정상)
-        console.log(`⚠️ Admin connected to project without main connection`);
-        // socket.emit('error', { message: 'Please connect to main server first' });
-        socket.disconnect(true);
-        return;
+        // // Admin이 메인 서버 연결 없이 프로젝트에 직접 연결 (비정상)
+        // console.log(`⚠️ Admin connected to project without main connection`);
+        // // socket.emit('error', { message: 'Please connect to main server first' });
+        // socket.disconnect(true);
+        // return;
+
+
+        // ★★★ 수정: 강제 disconnect 대신 세션으로 복원 ★★★
+        console.log(`⚠️ Admin connected to project without main connection — restoring from session`);
+        
+        usersInfo.set(session.userId, JsonBuilder.createUser({
+          userId: session.userId,
+          userName: session.userName || adminType,
+          mainSocketId: null,
+          projectSocketId: socket.id,
+          type: adminType,
+          projectId: projectId,
+          roomId: null,
+          status: 'online',
+          ip: clientIP,
+          connectedAt: new Date().toISOString(),
+          lastActivity: new Date().toISOString()
+        }));
+        
+        console.log(`👑 Admin restored and entered project ${projectId}`);
       }
     }
     // ========== Client 처리 ==========
@@ -202,8 +222,8 @@ async function setupCreateProjectNamespace(io, projectId, projectName, usersInfo
         usersInfo.set(session.userId, existingUser);
       } else {
         // DB에서 사용자 정보 조회
-        const userResult = await usercontrols.getUserById(session.userId);
-        if (!userResult.success) {
+        const userResult = await usercontrols.getUsersById(session.userId);
+        if (!userResult || !userResult.id) {
           console.log(`❌ User not found in DB: ${session.userId}`);
           // socket.emit('error', { message: 'User not found' });
           socket.disconnect(true);
@@ -248,6 +268,11 @@ async function setupCreateProjectNamespace(io, projectId, projectName, usersInfo
 
     // 방 생성
     socket.on('create-room', async (data, callback) => {
+      const session = socket.handshake.session;
+      if (!session || session.userType !== adminType) {
+        callback({ success: false });
+        return;
+      }
       const roomId = crypto.randomUUID();
       await createRoom(roomId, data.roomName, projectId, rooms).then(async (result) => {
         console.log(`[프로젝트 ${projectId}] 방 생성 성공: ${roomId}`);
@@ -262,6 +287,11 @@ async function setupCreateProjectNamespace(io, projectId, projectName, usersInfo
 
     // 방 삭제
     socket.on('delete-room', async (data, callback) => {
+      const session = socket.handshake.session;
+      if (!session || session.userType !== adminType) {
+        callback({ success: false });
+        return;
+      }
       await deleteRoom(data.roomId,rooms).then(async (bool) => {
         console.log(`[프로젝트 ${projectId}] 방 삭제 성공: ${data.roomId}`);
         namespace.emit('room-deleted', { roomId: data.roomId });
@@ -275,6 +305,16 @@ async function setupCreateProjectNamespace(io, projectId, projectName, usersInfo
 
     // 방 수정
     socket.on('update-room', async (data, callback) => {
+      const session = socket.handshake.session;
+      if (!session || session.userType !== adminType) {
+        const authorized = data && data.roomId
+          ? await usercontrols.getBoolUserRoomAuthByIds(data.roomId, session.userId)
+          : false;
+        if (!authorized) {
+          callback({ success: false });
+          return;
+        }
+      }
       await updateRoom(data.roomId, data.roomName, rooms).then(async () => {
         console.log(`[프로젝트 ${projectId}] 방 수정 성공: ${data.roomId}`);
         namespace.emit('room-updated', { roomId: data.roomId, roomName: data.roomName });
@@ -338,6 +378,12 @@ async function setupCreateProjectNamespace(io, projectId, projectName, usersInfo
       const userInfo = usersInfo.get(userId);
       if (!userInfo) return;
 
+      // ★★★ 추가: 이 소켓이 현재 프로젝트 소켓인지 확인 ★★★
+      if (userInfo.projectSocketId !== socket.id) {
+        console.log(`⚠️ 이미 교체된 프로젝트 소켓의 disconnect — 무시 (current: ${userInfo.projectSocketId}, this: ${socket.id})`);
+        return;
+      }
+
       // 방에서 제거
       if (userInfo.roomId) {
         namespace.to(userInfo.roomId).emit('user-left', {
@@ -347,31 +393,23 @@ async function setupCreateProjectNamespace(io, projectId, projectName, usersInfo
         });
       }
 
-      // ========== Admin vs Client 분기 처리 ==========
       if (session.userType === adminType) {
-        // Admin은 프로젝트 소켓만 제거
         userInfo.projectSocketId = null;
         userInfo.projectId = null;
         userInfo.roomId = null;
         userInfo.lastActivity = new Date().toISOString();
         
-        // 메인 소켓도 없으면 완전 삭제
-        if (!userInfo.mainSocketId) {
-          usersInfo.delete(userId);
-          console.log(`👑 Admin fully disconnected: ${userId}`);
-        } else {
-          usersInfo.set(userId, userInfo);
-          console.log(`👑 Admin PROJECT socket disconnected (main socket still active): ${userId}`);
-        }
+        // ★★★ 수정: 항상 유지 (삭제하지 않음) ★★★
+        usersInfo.set(userId, userInfo);
+        console.log(`👑 Admin PROJECT socket disconnected (mainSocket: ${userInfo.mainSocketId || 'null'})`);
       } else {
-        // Client는 완전 삭제
         usersInfo.delete(userId);
-        
         console.log(`👋 Client ${userInfo.userName} left project ${projectId}`);
       }
 
       console.log(`[프로젝트 ${projectId}] 클라이언트 연결 해제: ${userId}, socketId: ${socket.id}`);
     });
+
 
     ////////////////////////////////////////////////////////////////////////////////// 타임라인 수정 ////////////////////////////////////////////////////////////////////////////////// 
 
@@ -424,7 +462,7 @@ async function setupProjectNamespaces(io, usersInfo, socketSessionMiddleware) {
   // 초기 프로젝트들에 대해 네임스페이스 생성
   const projects = await selectProjectsNamespace();
   projects.forEach(project => {
-      setupCreateProjectNamespace(io, project.id, project.name, usersInfo, socketSessionMiddleware);
+      setupCreateProjectNamespace(io, project.id, project.name, usersInfo, socketSessionMiddleware, project.duration);
   });
 
 }
@@ -433,19 +471,37 @@ async function setupProjectNamespaces(io, usersInfo, socketSessionMiddleware) {
 //   return namespaces.get(projectId);
 // }
 
-async function sendProjectPlay(projectId) {
-  timelineTimers.get(projectId)?.play();
-  console.log(`[프로젝트 ${projectId}] 재생 이벤트 전파.`);
+async function sendProjectPlay(projectId, time) {
+  const timer = timelineTimers.get(projectId);
+  if (!timer) {
+    console.log(`[프로젝트 ${projectId}] 타이머 없음 — 재생 불가`);
+    return false;
+  }
+  const result = timer.play(time);
+  console.log(`[프로젝트 ${projectId}] 재생 이벤트 전파: ${time}`);
+  return result;
 }
 
-async function sendProjectPause(projectId) {
-  timelineTimers.get(projectId)?.pause();
-    console.log(`[프로젝트 ${projectId}] 일시정지 이벤트 전파.`);
+async function sendProjectPause(projectId, time) {
+  const timer = timelineTimers.get(projectId);
+  if (!timer) {
+    console.log(`[프로젝트 ${projectId}] 타이머 없음 — 일시정지 불가`);
+    return false;
+  }
+  const result = timer.pause(time);
+  console.log(`[프로젝트 ${projectId}] 일시정지 이벤트 전파: ${time}`);
+  return result;
 }
 
 async function sendProjectStop(projectId) {
-  timelineTimers.get(projectId)?.stop();
-  console.log(`[프로젝트 ${projectId}] 정지 이벤트 전파.`);
+  const timer = timelineTimers.get(projectId);
+  if (!timer) {
+    console.log(`[프로젝트 ${projectId}] 타이머 없음 — 정지 불가`);
+    return false;
+  }
+  timer.stop();
+  console.log(`[프로젝트 ${projectId}] 정지 이벤트 전파`);
+  return true;
 }
 
 
@@ -455,7 +511,7 @@ async function createProjectNamespace(io, id , name, duration, usersInfo , socke
   try{
     const result = await projects_dbcontrol.createProject(id, name, duration)
     console.log('프로젝트 생성 성공:', result);
-    setupCreateProjectNamespace(io, id, name, usersInfo, socketSessionMiddleware);
+    setupCreateProjectNamespace(io, id, name, usersInfo, socketSessionMiddleware, duration);
     return result;
   
   }catch(err){
@@ -495,7 +551,13 @@ async function updateProjectNamespace(projectId, name, duration) {
       console.error('프로젝트 이름 수정 실패:', err);
       throw err;
     });
-    
+
+    // 타이머 duration 업데이트
+    const timer = timelineTimers.get(projectId);
+    if (timer) {
+      timer.setDuration(duration);
+      console.log(`[프로젝트 ${projectId}] Duration 업데이트: ${duration}s`);
+    }
   }
 }
 

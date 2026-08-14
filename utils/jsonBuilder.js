@@ -7,7 +7,6 @@ class JsonBuilder {
         return {
             ...schemas.userSchema,
             userId: data.userId,
-            userLoginId: data.userLoginId || '',
             userName: data.userName || '',
             mainSocketId: data.mainSocketId || '', // 메인 서버 소켓
             projectSocketId: data.projectSocketId || '',    // 프로젝트 네임스페이스 소켓 (나중에 추가)

@@ -97,6 +97,7 @@ async function initRoomEvents(socket, namespace, usersInfo, projectId , roomslis
       console.log(`기존 사용자 정보 업데이트: ${existingUser.userName}`);
       usersInfo.set(session.userId, {
         ...existingUser,
+        userName: data.userName || existingUser.userName,
         roomId: roomId,
         projectId: projectId
       });
@@ -247,9 +248,11 @@ async function initRoomEvents(socket, namespace, usersInfo, projectId , roomslis
     });
 
 
+    const userId = data.userId || socket.handshake.session.userId;
+
     callback({ 
       success: true, 
-      myAuth : await user_dbcontrol.getBoolUserRoomAuthByIds(data.roomId, data.userId),
+      myAuth : await user_dbcontrol.getBoolUserRoomAuthByIds(data.roomId, userId),
       room: {
         id: room.id,
         name: room.name,

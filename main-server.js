@@ -29,6 +29,7 @@ const directCallHandler = require('./handlers/directCallHandler');
 
 const usercontrols = require('./db/controls/usercontrols');
 const JsonBuilder = require('./utils/jsonBuilder');
+const { getAdminId } = require('./utils/adminIdentity');
 
 
 const adminType = process.env.ADMIN_TYPE || 'admin';
@@ -37,7 +38,7 @@ const clientType = process.env.CLIENT_TYPE || 'client';
 const PORT = process.env.PORT || 8888;
 const HOST = process.env.HOST || '0.0.0.0';
 
-const MyadminId = '075ea07b-fda8-11f0-99ce-121212121212'; // Admin 고유 ID 예시
+const adminId = getAdminId();
 
 
 
@@ -147,9 +148,7 @@ function requireLicense(req, res, next) {
 // }
 
 
-const sessionDb = new Database(path.join(dbDir, 'sessions.db'), {
-  verbose: process.env.NODE_ENV === 'development' ? console.log : null
-});
+const sessionDb = new Database(path.join(dbDir, 'sessions.db'));
 
 // 내부망 전용 세션 설정
 const sessionMiddleware = session({
@@ -368,6 +367,78 @@ app.post('/login', requireLicense, async (req, res) => {
   }
 });
 
+// ========== Admin 로그인 (라이선스 계정 검증) ==========
+// Admin 세션은 반드시 이 경로로만 발급됨 (소켓 연결 시 자동 생성 없음)
+app.post('/admin/login', requireLicense, async (req, res) => {
+  try {
+    const { login_id, password } = req.body;
+
+    if (!login_id || !password) {
+      return res.status(400).json({
+        success: false,
+        message: '아이디와 비밀번호를 입력하세요',
+      });
+    }
+
+    const result = await licenseManager.verifyAdminCredentials(login_id, password);
+
+    if (!result.success) {
+      console.log(`⛔ Admin 로그인 실패: ${login_id} from ${req.ip} — ${result.message}`);
+      return res.status(401).json({
+        success: false,
+        message: result.message,
+      });
+    }
+
+    // 기존 Admin 세션 정리 (현재 세션 제외)
+    try {
+      const existingSessions = sessionDb.prepare('SELECT sid, sess FROM sessions').all();
+      for (const row of existingSessions) {
+        try {
+          const sessData = JSON.parse(row.sess);
+          if (sessData.userId === adminId && row.sid !== req.session.id) {
+            sessionDb.prepare('DELETE FROM sessions WHERE sid = ?').run(row.sid);
+          }
+        } catch (e) { /* 파싱 실패 무시 */ }
+      }
+    } catch (e) {
+      console.error('기존 Admin 세션 정리 실패:', e);
+    }
+
+    req.session.userId = adminId;
+    req.session.userLoginId = login_id;
+    req.session.userName = login_id;
+    req.session.userType = adminType;
+    req.session.loginIP = req.ip;
+    req.session.loginTime = new Date().toISOString();
+
+    req.session.save(err => {
+      if (err) {
+        console.error('Admin 세션 저장 오류:', err);
+        return res.status(500).json({
+          success: false,
+          message: '세션 저장에 실패했습니다',
+        });
+      }
+
+      console.log(`👑 Admin 로그인 성공: ${login_id} from ${req.ip} (검증: ${result.verifiedBy})`);
+
+      res.json({
+        success: true,
+        adminId: adminId,
+        sessionId: req.session.id,
+        verifiedBy: result.verifiedBy,
+      });
+    });
+  } catch (error) {
+    console.error('Admin 로그인 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: '서버 오류가 발생했습니다',
+    });
+  }
+});
+
 // 로그아웃
 app.post('/logout', requireLicense, (req, res) => {
   const userId = req.session.userId;
@@ -420,9 +491,22 @@ app.post('/logout', requireLicense, (req, res) => {
 });
 
 // 세션 확인 (내부망 디버깅용 정보 추가 / 오토 로그인 구현 시 활용)
-app.get('/session', requireLicense, (req, res) => {
+app.get('/session', requireLicense, async (req, res) => {
   console.log(`세션 정보 요청: ${req.ip}`);
   if (req.session.userId) {
+    // Admin은 users 테이블에 존재하지 않으므로 DB 검증 제외 (adminId 일치 시)
+    if (req.session.userId !== adminId) {
+      // 사용자가 DB에 존재하는지 확인 (삭제된 사용자 세션 무효화)
+      const user = await usercontrols.getUsersById(req.session.userId);
+      if (!user || !user.id) {
+        console.log(`❌ 세션 무효: 사용자 ${req.session.userId}가 DB에서 삭제됨`);
+        req.session.destroy(() => {});
+        return res.status(401).json({
+          success: false,
+          message: 'User no longer exists'
+        });
+      }
+    }
     console.log(`✅ Authenticated session for user ${req.session.userName} (ID: ${req.session.userId}) from ${req.ip}`);
     res.json({
       success: true,
@@ -506,70 +590,10 @@ io.on('connection', async (socket) => {
 
   const { type } = socket.handshake.auth;
 
-  if (!type) {
-    //타입 없으면 연결 종료
-    socket.disconnect();
-  }
+  // ★ Admin 판별: 세션(userId === adminId)으로만 인정 — HTTP /admin/login으로만 발급됨
+  if (session.userId === adminId) {
+    console.log(`👑 Admin 연결 (세션 재사용): ${socket.id} from ${clientIP}`);
 
-
-  if (type === adminType) {
-    console.log(`👑 Admin 연결 시도: ${socket.id}`);
-
-    const adminId = MyadminId;
-
-    // ★ 기존 세션이 있으면 재사용, 없을 때만 새로 저장
-    if (session.userId === adminId) {
-      console.log(`👑 기존 Admin 세션 재사용: ${session.id}`);
-      // 세션 쿠키를 다시 발급하지 않음 (클라이언트가 이미 보유)
-    } else {
-      // ★ 새 세션일 때만: 기존 admin 세션 DB에서 정리
-      try {
-        const allSessions = sessionDb.prepare(`SELECT sid, sess FROM sessions`).all();
-        for (const row of allSessions) {
-          try {
-            const data = JSON.parse(row.sess);
-            if (data.userId === adminId && row.sid !== session.id) {
-              sessionDb.prepare(`DELETE FROM sessions WHERE sid = ?`).run(row.sid);
-              console.log(`🗑️ 기존 Admin 세션 삭제: ${row.sid}`);
-            }
-          } catch (e) { /* 무시 */ }
-        }
-      } catch (e) {
-        console.error('Admin 세션 정리 실패:', e);
-      }
-
-      session.userId = adminId;
-      session.userName = adminType;
-      session.userType = adminType;
-      session.loginIP = clientIP;
-      session.loginTime = new Date().toISOString();
-
-      await new Promise((resolve, reject) => {
-        session.save((err) => {
-          if (err) {
-            console.error('Admin 세션 저장 실패:', err);
-            reject(err);
-          } else {
-            console.log(`✅ Admin 세션 새로 저장: ${session.id}`);
-            resolve();
-          }
-        });
-      });
-
-      // ★ 새 세션일 때만 쿠키 발급
-      socket.emit('session-created', {
-        adminId: adminId,
-        sessionId: session.id,
-        signedCookie: `${process.env.SESSION_NAME || 'localSessionId'}=${encodeURIComponent(
-          's:' + cookieSignature.sign(
-            session.id,
-            process.env.SESSION_SECRET || 'local-network-secret-key'
-          )
-        )}`,
-      });
-    }
-
-     // Admin은 메인과 프로젝트 소켓을 별도로 관리
     const existingAdmin = usersInfo.get(adminId);
     if (existingAdmin) {
       // 기존 Admin 정보 업데이트 (메인 소켓만)
@@ -581,8 +605,7 @@ io.on('connection', async (socket) => {
       // 새 Admin 생성
       usersInfo.set(adminId, JsonBuilder.createUser({
         userId: adminId,
-        userLoginId: adminType,
-        userName: adminType,
+        userName: session.userName || adminType,
         mainSocketId: socket.id, // 메인 서버 소켓
         projectSocketId: null,    // 프로젝트 네임스페이스 소켓 (나중에 추가)
         type: adminType,
@@ -598,12 +621,26 @@ io.on('connection', async (socket) => {
     }
 
     // 공통 이벤트 등록
-    registerCommonEvents(socket, session, type);
+    registerCommonEvents(socket, session, adminType);
 
     // Admin 전용 이벤트 등록
-    registerAdminOnlyEvents(socket, session, type, socketSessionMiddleware);
+    registerAdminOnlyEvents(socket, session, adminType, socketSessionMiddleware);
 
     return; // Admin 연결은 여기서 종료 (프로젝트 네임스페이스에서 별도 관리)
+  }
+
+  // ★ 'admin' 타입을 주장하지만 유효 세션이 없으면 거부 (소켓 연결로 세션 자동 생성 금지)
+  if (type === adminType) {
+    console.log(`⛔ Admin 세션 없이 접근 시도 거부: ${socket.id} from ${clientIP}`);
+    socket.emit('auth-expired', { message: '관리자 인증이 필요합니다. 다시 로그인하세요.' });
+    socket.disconnect(true);
+    return;
+  }
+
+  if (!type) {
+    //타입 없으면 연결 종료
+    socket.disconnect();
+    return;
   }
 
 
@@ -612,10 +649,9 @@ io.on('connection', async (socket) => {
   // 인증되지 않은 연결 거부
   if (!session.userId) {
     console.log(`❌ Unauthenticated connection rejected: ${socket.id} from ${clientIP}`);
-    // socket.emit('auth-required', { 
-    //   message: 'Please login first',
-    //   serverIP: getLocalIPs()[0]
-    // });
+    socket.emit('auth-expired', {
+      message: '로그인이 필요합니다. 다시 로그인하세요.',
+    });
     socket.disconnect(true);
     return;
   }
@@ -656,7 +692,6 @@ io.on('connection', async (socket) => {
     // 새로 생성 - Admin과 동일한 구조
     usersInfo.set(session.userId, JsonBuilder.createUser({
       userId: session.userId,
-      userLoginId: session.userLoginId,
       userName: session.userName,
       mainSocketId: socket.id,
       projectSocketId: null,
@@ -699,7 +734,7 @@ function registerCommonEvents(socket, session, type) {
 
   // 사용자 관련 이벤트 핸들링
   // userHandler(io, socket, clients, userSockets);
-  userHandler(io, socket, usersInfo, MyadminId);
+  userHandler(io, socket, usersInfo, adminId, sessionDb);
 
   // 타임라인 관련 이벤트 핸들링
   timelineHandler(io, socket);
@@ -717,19 +752,40 @@ function registerCommonEvents(socket, session, type) {
 
     const userInfo = usersInfo.get(session.userId);
     if (!userInfo) return;
+
+    // ★★★ 추가: 이 소켓이 현재 메인 소켓인지 확인 ★★★
+    if (userInfo.mainSocketId !== socket.id) {
+      console.log(`⚠️ 이미 교체된 소켓의 disconnect — 무시 (current: ${userInfo.mainSocketId}, this: ${socket.id})`);
+      return;
+    }
+
     // Admin은 메인 소켓만 제거, projectSocketId는 유지
     if (userInfo.type === adminType) {
       userInfo.mainSocketId = null;
       userInfo.lastActivity = new Date().toISOString();
 
-      // 프로젝트 소켓도 없으면 완전 삭제
-      if (!userInfo.projectSocketId) {
-        usersInfo.delete(session.userId);
-        console.log(`👑 Admin fully disconnected: ${session.userId}`);
-      } else {
-        usersInfo.set(session.userId, userInfo);
-        console.log(`👑 Admin MAIN socket disconnected (project socket still active): ${session.userId}`);
-      }
+
+      // ★★★ 수정: 즉시 삭제하지 않고 항상 유지 (재연결 대기) ★★★
+      usersInfo.set(session.userId, userInfo);
+      console.log(`👑 Admin MAIN socket disconnected (keeping userInfo, projectSocket: ${userInfo.projectSocketId || 'null'})`);
+
+      // ★★★ 추가: 30초 후에도 모든 소켓이 없으면 그때 삭제 ★★★
+      setTimeout(() => {
+        const currentInfo = usersInfo.get(session.userId);
+        if (currentInfo && !currentInfo.mainSocketId && !currentInfo.projectSocketId) {
+          usersInfo.delete(session.userId);
+          console.log(`👑 Admin fully cleaned up after timeout: ${session.userId}`);
+        }
+      }, 10000);
+
+      // // 프로젝트 소켓도 없으면 완전 삭제
+      // if (!userInfo.projectSocketId) {
+      //   usersInfo.delete(session.userId);
+      //   console.log(`👑 Admin fully disconnected: ${session.userId}`);
+      // } else {
+      //   usersInfo.set(session.userId, userInfo);
+      //   console.log(`👑 Admin MAIN socket disconnected (project socket still active): ${session.userId}`);
+      // }
     }
     // Client는 switching 상태로 변경
     else {
@@ -818,15 +874,17 @@ function registerAdminOnlyEvents(socket, session, type, socketSessionMiddleware)
     }
 
     const projectId = data.projectId;
+    const time = data.time;
     console.log(`프로젝트 ${projectId} 재생 이벤트 요청 받음.`);
 
-    await projectHandler.sendProjectPlay(projectId).then(async () => {
-      console.log(`프로젝트 ${projectId} 재생 이벤트 전파 완료.`);
-      callback({ success: true });
-    }).catch(async (err) => {
-      console.error(`프로젝트 ${projectId} 재생 이벤트 전파 중 오류 발생:`, err);
+    try {
+      const success = await projectHandler.sendProjectPlay(projectId, time);
+      console.log(`프로젝트 ${projectId} 재생 처리 결과: ${success}`);
+      callback({ success });
+    } catch (err) {
+      console.error(`프로젝트 ${projectId} 재생 중 오류:`, err);
       callback({ success: false });
-    });
+    }
   });
 
   //프로젝트 일시정지하기
@@ -838,14 +896,17 @@ function registerAdminOnlyEvents(socket, session, type, socketSessionMiddleware)
     }
 
     const projectId = data.projectId;
+    const time = data.time;
+    console.log(`프로젝트 ${projectId} 일시정지 이벤트 요청 받음.`);
 
-    await projectHandler.sendProjectPause(projectId).then(async () => {
-      console.log(`프로젝트 ${projectId} 일시정지 이벤트 전파 완료.`);
-      callback({ success: true });
-    }).catch(async (err) => {
-      console.error(`프로젝트 ${projectId} 일시정지 이벤트 전파 중 오류 발생:`, err);
+    try {
+      const success = await projectHandler.sendProjectPause(projectId, time);
+      console.log(`프로젝트 ${projectId} 일시정지 처리 결과: ${success}`);
+      callback({ success });
+    } catch (err) {
+      console.error(`프로젝트 ${projectId} 일시정지 중 오류:`, err);
       callback({ success: false });
-    });
+    }
   });
 
   //프로젝트 정지하기
@@ -857,14 +918,16 @@ function registerAdminOnlyEvents(socket, session, type, socketSessionMiddleware)
     }
 
     const projectId = data.projectId;
+    console.log(`프로젝트 ${projectId} 정지 이벤트 요청 받음.`);
 
-    await projectHandler.sendProjectStop(projectId).then(async () => {
-      console.log(`프로젝트 ${projectId} 정지 이벤트 전파 완료.`);
-      callback({ success: true });
-    }).catch(async (err) => {
-      console.error(`프로젝트 ${projectId} 정지 이벤트 전파 중 오류 발생:`, err);
+    try {
+      const success = await projectHandler.sendProjectStop(projectId);
+      console.log(`프로젝트 ${projectId} 정지 처리 결과: ${success}`);
+      callback({ success });
+    } catch (err) {
+      console.error(`프로젝트 ${projectId} 정지 중 오류:`, err);
       callback({ success: false });
-    });
+    }
   });
 }
 
@@ -935,6 +998,8 @@ function deactivateMainServer() {
 }
 
 
+let _lastWarningKey = null; // {expiresAt, threshold}: 갱신 시 리셋 용도
+
 // 만료일 체크 (1시간마다)
 function startExpirationChecker() {
   if (expirationChecker) clearInterval(expirationChecker);
@@ -957,12 +1022,22 @@ function startExpirationChecker() {
     }
 
     const daysLeft = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
-    if (daysLeft <= 3) {
-      console.warn(`⚠️ 구독 만료 ${daysLeft}일 전`);
-      io.emit('license-warning', {
-        message: `구독이 ${daysLeft}일 후 만료됩니다`,
-        daysLeft,
-      });
+    const thresholds = [3, 1];
+
+    for (const threshold of thresholds) {
+      const key = `${licenseManager.expiresAt}-${threshold}`;
+      if (daysLeft === threshold && _lastWarningKey !== key) {
+        const isUrgent = threshold === 1;
+        console.warn(`⚠️ 구독 만료 ${daysLeft}일 전`);
+        io.emit('license-warning', {
+          message: isUrgent
+            ? `구독이 내일 만료됩니다. 즉시 갱신해주세요.`
+            : `구독이 ${daysLeft}일 후 만료됩니다`,
+          daysLeft,
+          urgent: isUrgent,
+        });
+        _lastWarningKey = key;
+      }
     }
   }, 60 * 60 * 1000);
 }
@@ -1063,9 +1138,11 @@ process.on('SIGINT', () => {
     expirationChecker = null;
   }
 
-  messageCleanupHandler.stopCleanupScheduler(); // 메시지 정리 핸들러 종료
+   messageCleanupHandler.stopCleanupScheduler(); // 메시지 정리 핸들러 종료
 
   stopDiscoveryServer();  // ★ 디스커버리 종료
+
+  licenseManager.stop();  // ★ 오프라인 Admin 검증 정보 삭제 + 타이머 정리
   
    // 2. ★ Socket.IO 먼저 종료 (모든 소켓 연결 해제)
   io.close(() => {

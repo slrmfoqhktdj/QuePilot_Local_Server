@@ -2,9 +2,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const { dbDir } = require('./filePaths');
 
-const db = new Database(path.join(dbDir, 'quepilot.db'), {
-  verbose: process.env.NODE_ENV === 'development' ? console.log : null
-});
+const db = new Database(path.join(dbDir, 'quepilot.db'));
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -14,7 +12,8 @@ db.exec(`
     id TEXT PRIMARY KEY,
     login_id TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
-    password TEXT NOT NULL
+    password TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
   );
 
   CREATE TABLE IF NOT EXISTS projects (
@@ -36,8 +35,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     room_id TEXT NOT NULL,
     name TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now', 'localtime')),
-    FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
   );
 
   CREATE TABLE IF NOT EXISTS cues (
@@ -90,5 +88,16 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_msg_room_room ON message_room(room_id);
   CREATE INDEX IF NOT EXISTS idx_msg_room_date ON message_room(created_at);
 `);
+
+// 마이그레이션: LATEST_VERSION 숫자만 올리면 됨
+const LATEST_VERSION = 6;
+
+const curVer = Number(db.pragma('user_version', { plain: true }));
+
+if (curVer < LATEST_VERSION) {
+  try { db.exec(`ALTER TABLE users ADD COLUMN created_at TEXT`); } catch (_) {}
+}
+
+db.pragma(`user_version = ${LATEST_VERSION}`);
 
 module.exports = db;

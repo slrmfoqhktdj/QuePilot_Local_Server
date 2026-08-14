@@ -3,8 +3,10 @@ const message_dbcontrol = require('../db/controls/messagescontrols');
 const JsonBuilder = require('../utils/jsonBuilder');
 const { emitToUser } = require('../utils/socketHelpers');
 
+const adminType = process.env.ADMIN_TYPE || 'admin';
 
-module.exports = function userHandler(io, socket, usersInfo, myAdminId) {
+
+module.exports = function userHandler(io, socket, usersInfo, myAdminId, sessionDb) {
 
   socket.on('user-list', async (data, callback) => {
     await user_dbcontrol.getUsers().then(usersList => {
@@ -79,6 +81,46 @@ module.exports = function userHandler(io, socket, usersInfo, myAdminId) {
   socket.on('user-remove', async (data, callback) => {
     await user_dbcontrol.deleteUserById(data.userId).then(result => {
       console.log(`사용자 삭제 성공`);
+
+      // 세션 DB에서 해당 사용자 세션 모두 삭제
+      try {
+        const allSessions = sessionDb.prepare('SELECT sid, sess FROM sessions').all();
+        let deletedCount = 0;
+        for (const row of allSessions) {
+          try {
+            const sessData = JSON.parse(row.sess);
+            if (sessData.userId === data.userId) {
+              sessionDb.prepare('DELETE FROM sessions WHERE sid = ?').run(row.sid);
+              deletedCount++;
+            }
+          } catch (e) {
+            // 파싱 실패한 세션도 삭제
+            sessionDb.prepare('DELETE FROM sessions WHERE sid = ?').run(row.sid);
+            deletedCount++;
+          }
+        }
+        if (deletedCount > 0) {
+          console.log(`🗑️ 삭제된 사용자 세션 ${deletedCount}개 정리 (userId: ${data.userId})`);
+        }
+      } catch (e) {
+        console.error('세션 정리 실패:', e);
+      }
+
+      // 메모리에서 제거
+      usersInfo.delete(data.userId);
+
+      // 연결된 소켓에서 해당 사용자 찾아 disconnect
+      for (const [socketId, info] of usersInfo.entries()) {
+        if (info && info.userId === data.userId) {
+          const targetSocket = io.sockets.sockets.get(socketId);
+          if (targetSocket) {
+            targetSocket.emit('force-disconnect', { reason: 'user-deleted' });
+            targetSocket.disconnect(true);
+          }
+          usersInfo.delete(socketId);
+        }
+      }
+
       callback({ success: true });
     }).catch(err => {
       console.log(`사용자 삭제 실패:`, err);
@@ -107,7 +149,10 @@ module.exports = function userHandler(io, socket, usersInfo, myAdminId) {
   });
 
   socket.on('user-auth-list', async (data, callback) => {
-    await user_dbcontrol.getUserAuthList(data.userId).then(result => {
+    const session = socket.handshake.session;
+    // 일반 사용자는 항상 본인 권한만 조회 가능 (관리자만 타 사용자 조회)
+    const targetUserId = session && session.userType !== adminType ? session.userId : data.userId;
+    await user_dbcontrol.getUserAuthList(targetUserId).then(result => {
       console.log(`사용자 권한 조회 성공`);
       callback({ success: true, roomList: result });
     }).catch(err => {
