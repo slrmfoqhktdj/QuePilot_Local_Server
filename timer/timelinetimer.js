@@ -10,7 +10,7 @@ class TimelineState {
     this.pausedAt = null;
     this.lastBroadcast = 0;
     this.heartbeatTimer = null;
-    this.syncInterval = 1000; // 1000ms마다 동기화 (조절 가능)
+    this.syncInterval = 5000; // 5초마다 동기화 (조절 가능)
   }
 
   play(time) {
