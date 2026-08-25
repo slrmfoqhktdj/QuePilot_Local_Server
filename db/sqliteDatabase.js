@@ -33,9 +33,16 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS tracks (
     id TEXT PRIMARY KEY,
-    room_id TEXT NOT NULL,
+    room_id TEXT,
+    project_id TEXT,
     name TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    created_at TEXT DEFAULT (datetime('now', 'localtime')),
+    CHECK (
+      (room_id IS NOT NULL AND project_id IS NULL) OR
+      (room_id IS NULL AND project_id IS NOT NULL)
+    ),
+    FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS cues (
@@ -79,6 +86,7 @@ db.exec(`
   -- 인덱스
   CREATE INDEX IF NOT EXISTS idx_rooms_project ON rooms(project_id);
   CREATE INDEX IF NOT EXISTS idx_tracks_room ON tracks(room_id);
+  CREATE INDEX IF NOT EXISTS idx_tracks_project ON tracks(project_id);
   CREATE INDEX IF NOT EXISTS idx_cues_track ON cues(track_id);
   CREATE INDEX IF NOT EXISTS idx_user_auth_user ON user_auth(user_id);
   CREATE INDEX IF NOT EXISTS idx_user_auth_room ON user_auth(room_id);
@@ -90,11 +98,21 @@ db.exec(`
 `);
 
 // 마이그레이션: LATEST_VERSION 숫자만 올리면 됨
-const LATEST_VERSION = 6;
+const LATEST_VERSION = 8;
 
 const curVer = Number(db.pragma('user_version', { plain: true }));
 
-if (curVer < LATEST_VERSION) {
+if (curVer < 7) {
+  try { db.exec(`ALTER TABLE tracks ADD COLUMN project_id TEXT`); } catch (_) {}
+  try {
+    db.exec(`
+      UPDATE tracks SET project_id = room_id, room_id = NULL
+      WHERE room_id NOT IN (SELECT id FROM rooms)
+    `);
+  } catch (_) {}
+}
+
+if (curVer < 6) {
   try { db.exec(`ALTER TABLE users ADD COLUMN created_at TEXT`); } catch (_) {}
 }
 

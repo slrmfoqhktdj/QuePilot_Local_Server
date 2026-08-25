@@ -59,7 +59,11 @@ module.exports = function timelineHandler(io, socket) {
 
     const trackId = crypto.randomUUID();
 
-    await timeline_dbcontrol.createTimeline(trackId, data.name, data.roomId, data.cues).then(result => {
+    const isRoomTrack = data.roomId && data.roomId !== data.projectId;
+    const dbRoomId = isRoomTrack ? data.roomId : null;
+    const dbProjectId = data.projectId;
+
+    await timeline_dbcontrol.createTimeline(trackId, data.name, dbRoomId, dbProjectId, data.cues).then(result => {
       console.log(`프로젝트 트랙 생성 성공`);
 
       if(data.projectId == data.roomId){
@@ -100,7 +104,11 @@ module.exports = function timelineHandler(io, socket) {
       }
     }
 
-    await timeline_dbcontrol.updateTimeline(data.trackId, data.name, data.roomId, data.cues).then(result => {
+    const isRoomTrack = data.roomId && data.roomId !== data.projectId;
+    const dbRoomId = isRoomTrack ? data.roomId : null;
+    const dbProjectId = data.projectId;
+
+    await timeline_dbcontrol.updateTimeline(data.trackId, data.name, dbRoomId, dbProjectId, data.cues).then(result => {
       console.log(`프로젝트 트랙 업데이트 성공`);
 
       if(data.projectId == data.roomId){

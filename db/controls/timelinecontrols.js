@@ -41,6 +41,7 @@ async function _rowsToTimelinesMap(rows) {
           id: row.track_id,
           name: row.track_name,
           room_id: row.track_room_id,
+          project_id: row.track_project_id,
           cues: [],
         };
         timeline.tracks.push(track);
@@ -109,6 +110,7 @@ async function _rowsToSingleTimeline(rows, includeRooms = false) {
           id: row.track_id,
           name: row.track_name,
           room_id: row.track_room_id,
+          project_id: row.track_project_id,
           cues: [],
         };
         result.tracks.push(track);
@@ -149,6 +151,7 @@ async function getTimelinesAll() {
       t.id         AS track_id,
       t.name       AS track_name,
       t.room_id    AS track_room_id,
+      t.project_id AS track_project_id,
       c.id         AS cue_id,
       c.label,
       c.comment,
@@ -173,6 +176,7 @@ async function getTimelinesAll() {
       t.id         AS track_id,
       t.name       AS track_name,
       t.room_id    AS track_room_id,
+      t.project_id AS track_project_id,
       c.id         AS cue_id,
       c.label,
       c.comment,
@@ -180,7 +184,7 @@ async function getTimelinesAll() {
       c.start_time,
       c.duration   AS cue_duration
     FROM projects p
-    INNER JOIN tracks t ON t.room_id = p.id
+    INNER JOIN tracks t ON t.project_id = p.id
     LEFT  JOIN cues   c ON c.track_id = t.id
 
     ORDER BY created_at ASC, start_time ASC
@@ -211,6 +215,7 @@ async function getTimelinesByProjectId(projectId) {
       t.id         AS track_id,
       t.name       AS track_name,
       t.room_id    AS track_room_id,
+      t.project_id AS track_project_id,
       c.id         AS cue_id,
       c.label,
       c.comment,
@@ -236,6 +241,7 @@ async function getTimelinesByProjectId(projectId) {
       t.id         AS track_id,
       t.name       AS track_name,
       t.room_id    AS track_room_id,
+      t.project_id AS track_project_id,
       c.id         AS cue_id,
       c.label,
       c.comment,
@@ -243,7 +249,7 @@ async function getTimelinesByProjectId(projectId) {
       c.start_time AS start_time,
       c.duration   AS cue_duration
     FROM projects p
-    INNER JOIN tracks t ON t.room_id = p.id
+    INNER JOIN tracks t ON t.project_id = p.id
     LEFT  JOIN cues   c ON c.track_id = t.id
     WHERE p.id = ?
 
@@ -270,6 +276,7 @@ async function getTimelinesByUser(projectId, roomId) {
       t.id         AS track_id,
       t.name       AS track_name,
       t.room_id    AS track_room_id,
+      t.project_id AS track_project_id,
       c.id         AS cue_id,
       c.label,
       c.comment,
@@ -291,6 +298,7 @@ async function getTimelinesByUser(projectId, roomId) {
       t.id         AS track_id,
       t.name       AS track_name,
       t.room_id    AS track_room_id,
+      t.project_id AS track_project_id,
       c.id         AS cue_id,
       c.label,
       c.comment,
@@ -298,7 +306,7 @@ async function getTimelinesByUser(projectId, roomId) {
       c.start_time,
       c.duration   AS cue_duration
     FROM projects p
-    INNER JOIN tracks t ON t.room_id = p.id
+    INNER JOIN tracks t ON t.project_id = p.id
     LEFT  JOIN cues   c ON c.track_id = t.id
     WHERE p.id = ?
 
@@ -316,18 +324,18 @@ async function getTimelinesByUser(projectId, roomId) {
 // ═══════════════════════════════════════════════
 //  createTimeline (트랙 + 큐 삽입)
 // ═══════════════════════════════════════════════
-async function createTimeline(id, name, room_id, cues) {
+async function createTimeline(id, name, room_id, project_id, cues) {
   console.log('Creating timeline with data');
 
   const insertTrack = db.prepare(
-    'INSERT INTO tracks (id, room_id, name) VALUES (?, ?, ?)'
+    'INSERT INTO tracks (id, room_id, project_id, name) VALUES (?, ?, ?, ?)'
   );
   const insertCue = db.prepare(
     'INSERT INTO cues (id, label, comment, color, track_id, start_time, duration) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
 
   const txn = db.transaction(() => {
-    insertTrack.run(id, room_id, name);
+    insertTrack.run(id, room_id, project_id, name);
 
     for (const cue of cues) {
       const cueId = cue.id || crypto.randomUUID();
@@ -338,7 +346,7 @@ async function createTimeline(id, name, room_id, cues) {
 
   txn();
 
-  return { id, name, room_id, cues };
+  return { id, name, room_id, project_id, cues };
 }
 
 
@@ -348,10 +356,10 @@ async function createTimeline(id, name, room_id, cues) {
 //  (기존의 전체 삭제 후 재삽입 방식 대비 불필요한 쓰기와
 //   created_at 리셋을 방지)
 // ═══════════════════════════════════════════════
-async function updateTimeline(id, name, room_id, cues) {
+async function updateTimeline(id, name, room_id, project_id, cues) {
   console.log('Updating timeline with data');
 
-  const updateTrack = db.prepare('UPDATE tracks SET name = ?, room_id = ? WHERE id = ?');
+  const updateTrack = db.prepare('UPDATE tracks SET name = ?, room_id = ?, project_id = ? WHERE id = ?');
   const selectCues  = db.prepare(
     'SELECT id, label, comment, color, start_time, duration FROM cues WHERE track_id = ?'
   );
@@ -364,7 +372,7 @@ async function updateTimeline(id, name, room_id, cues) {
   const deleteCue   = db.prepare('DELETE FROM cues WHERE id = ?');
 
   const txn = db.transaction(() => {
-    updateTrack.run(name, room_id, id);
+    updateTrack.run(name, room_id, project_id, id);
 
     const existingById = new Map(
       selectCues.all(id).map((row) => [row.id, row])
@@ -407,7 +415,7 @@ async function updateTimeline(id, name, room_id, cues) {
 
   txn();
 
-  return { id, name, room_id, cues };
+  return { id, name, room_id, project_id, cues };
 }
 
 
